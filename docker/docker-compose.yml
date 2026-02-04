@@ -1,0 +1,80 @@
+# Abyz-AutoRA Docker Compose for Raspberry Pi (ARM64)
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: abyz-autora-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${TIMEZONE:-Asia/Seoul}
+      - N8N_LOG_LEVEL=${LOG_LEVEL:-warn}
+      - N8N_LOG_OUTPUT=console
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+    env_file:
+      - .env
+    volumes:
+      # n8n data
+      - n8n_data:/home/node/.n8n
+      # NAS mount - medical auth folder
+      - ${NAS_PATH:-/data/medical-auth}:/data/medical-auth
+      # Custom scripts
+      - ./scripts:/scripts:ro
+    networks:
+      - abyz-network
+    # For Raspberry Pi ARM64 compatibility
+    platform: linux/arm64
+    # Resource limits for safety
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Watchtower for auto-updates (disabled by default for security)
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: abyz-autora-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=86400
+      - WATCHTOWER_SCOPE=abyz-autora
+      - WATCHTOWER_INCLUDE_STOPPED=false
+    networks:
+      - abyz-network
+    platform: linux/arm64
+    # Only update containers with this label
+    command: --label-enable --scope abyz-autora
+    profiles:
+      - auto-update
+
+volumes:
+  n8n_data:
+    driver: local
+
+networks:
+  abyz-network:
+    driver: bridge

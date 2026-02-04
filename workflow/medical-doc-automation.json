@@ -1,0 +1,247 @@
+{
+  "name": "Medical Document Automation - Abyz-AutoRA",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-trigger",
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Context Extraction: Extract ProductName and ModelName from file path\n// Input path format: .../02_Projects/{ProductName}/{ModelName}/requests/{filename}.docx\n\nconst filePath = $input.first().json.path || $input.first().json.filePath;\n\n// Normalize path separators (Windows/Unix compatibility)\nconst normalizedPath = filePath.replace(/\\\\/g, '/');\n\n// Parse path components\nconst pathParts = normalizedPath.split('/').filter(p => p);\n\n// Find indices\nconst projectsIdx = pathParts.findIndex(p => p === '02_Projects');\nif (projectsIdx === -1 || pathParts.length <= projectsIdx + 2) {\n  throw new Error(`Invalid path structure: Cannot find 02_Projects folder in ${filePath}`);\n}\n\nconst productName = pathParts[projectsIdx + 1];\nconst modelName = pathParts[projectsIdx + 2];\nconst fileName = pathParts[pathParts.length - 1];\n\n// Sanitize filename to prevent command injection\nconst safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');\n\n// Detect target country from filename\nlet targetCountry = 'Unknown';\nconst fileNameUpper = fileName.toUpperCase();\nif (fileNameUpper.includes('FDA') || fileNameUpper.includes('510K')) {\n  targetCountry = 'US';\n} else if (fileNameUpper.includes('CE') || fileNameUpper.includes('MDR')) {\n  targetCountry = 'EU';\n} else if (fileNameUpper.includes('MFDS') || fileNameUpper.includes('KI')) {\n  targetCountry = 'KR';\n}\n\n// Construct paths\nconst basePath = '/data/medical-auth/02_Projects';\nconst projectPath = `${basePath}/${productName}/${modelName}`;\nconst specsPath = `${projectPath}/specs.json`;\nconst outputPath = `${projectPath}/output`;\nconst errorPath = `${projectPath}/_Error`;\n\n// Generate output filename with timestamp\nconst now = new Date();\nconst dateStr = now.getFullYear().toString() +\n                 (now.getMonth() + 1).toString().padStart(2, '0') +\n                 now.getDate().toString().padStart(2, '0');\nconst outputFileName = `${dateStr}_${targetCountry}_${safeFileName.replace('.docx', '')}_Completed.docx`;\n\nreturn {\n  json: {\n    productName,\n    modelName,\n    fileName: safeFileName,\n    originalFileName: fileName,\n    targetCountry,\n    specsPath,\n    outputPath,\n    errorPath,\n    outputFileName,\n    templatePath: normalizedPath,\n    fullOutputPath: `${outputPath}/${outputFileName}`,\n    fullErrorPath: `${errorPath}/${safeFileName}`,\n    timestamp: now.toISOString()\n  }\n};"
+      },
+      "id": "node-extract",
+      "name": "Extract Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "={{ $json.specsPath }}",
+        "options": {}
+      },
+      "id": "node-read-specs",
+      "name": "Read specs.json",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate specs.json content\nconst binaryData = $input.first().binary.data;\nconst specsPath = $('Extract Context').first().json.specsPath;\n\ntry {\n  // Parse JSON from binary data\n  const specs = JSON.parse(binaryData.toString('utf-8'));\n  \n  // Check for required fields\n  const requiredFields = ['model_info.model_id', 'model_info.trade_name', 'model_info.classification'];\n  const missingFields = [];\n  \n  for (const field of requiredFields) {\n    const parts = field.split('.');\n    let value = specs;\n    for (const part of parts) {\n      value = value?.[part];\n    }\n    if (value === undefined || value === null || value === '') {\n      missingFields.push(field);\n    }\n  }\n  \n  if (missingFields.length > 0) {\n    return {\n      json: {\n        valid: false,\n        error: `Missing required fields: ${missingFields.join(', ')}`,\n        specsPath\n      }\n    };\n  }\n  \n  return {\n    json: {\n      valid: true,\n      specs,\n      modelId: specs.model_info?.model_id\n    }\n  };\n  \n} catch (error) {\n  return {\n    json: {\n      valid: false,\n      error: `Failed to parse specs.json: ${error.message}`,\n      specsPath\n    }\n  };\n}"
+      },
+      "id": "node-validate",
+      "name": "Validate specs.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check",
+      "name": "Validation Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "command": "=mkdir -p \"{{ $('Extract Context').first().json.outputPath }}\" \"{{ $('Extract Context').first().json.errorPath }}\" \nmkdir -p /data/medical-auth/03_Logs"
+      },
+      "id": "node-mkdir",
+      "name": "Create Directories",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "command": "=python3 /scripts/merge_doc.py \"--template={{ $('Extract Context').first().json.templatePath }}\" \"--json={{ $('Extract Context').first().json.specsPath }}\" \"--output={{ $('Extract Context').first().json.fullOutputPath }}\"",
+        "options": {}
+      },
+      "id": "node-merge",
+      "name": "Merge Document",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write audit trail log with error handling\nconst fs = require('fs');\nconst path = require('path');\n\nconst context = $('Extract Context').first().json;\nconst mergeResult = $json;\n\n// Ensure log directory exists\nconst logDir = '/data/medical-auth/03_Logs';\ntry {\n  fs.mkdirSync(logDir, { recursive: true });\n} catch (err) {\n  console.error('Failed to create log directory:', err);\n}\n\nconst logEntry = {\n  timestamp: context.timestamp || new Date().toISOString(),\n  product: context.productName,\n  model: context.modelName,\n  template: context.originalFileName,\n  country: context.targetCountry,\n  output: context.outputFileName,\n  status: 'SUCCESS',\n  user: 'n8n-system'\n};\n\nconst logPath = path.join(logDir, 'audit.log');\nconst logLine = JSON.stringify(logEntry) + '\\n';\n\nlet logSuccess = true;\ntry {\n  fs.appendFileSync(logPath, logLine);\n} catch (err) {\n  console.error('Failed to write audit log:', err);\n  logSuccess = false;\n}\n\nreturn { \n  json: {\n    ...logEntry,\n    logSuccess\n  }\n};"
+      },
+      "id": "node-log",
+      "name": "Write Audit Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle validation/merge errors - move file to error folder\nconst context = $('Extract Context').first().json;\nconst validationResult = $json;\n\nconst errorInfo = {\n  timestamp: new Date().toISOString(),\n  error: validationResult.error || 'Unknown error',\n  path: context.specsPath,\n  product: context.productName,\n  model: context.modelName,\n  originalFile: context.originalFileName\n};\n\nreturn { json: errorInfo };"
+      },
+      "id": "node-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "command": "=mv \"{{ $('Extract Context').first().json.templatePath }}\" \"{{ $('Extract Context').first().json.fullErrorPath }}\" 2>/dev/null || echo \"File already moved or does not exist\"",
+        "options": {}
+      },
+      "id": "node-move-error",
+      "name": "Move to Error Folder",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write error log entry\nconst fs = require('fs');\nconst path = require('path');\n\nconst errorInfo = $json;\n\nconst logDir = '/data/medical-auth/03_Logs';\ntry {\n  fs.mkdirSync(logDir, { recursive: true });\n} catch (err) {\n  // Ignore\n}\n\nconst errorLogPath = path.join(logDir, 'errors.log');\nconst logLine = JSON.stringify(errorInfo) + '\\n';\n\ntry {\n  fs.appendFileSync(errorLogPath, logLine);\n} catch (err) {\n  console.error('Failed to write error log:', err);\n}\n\nreturn { json: errorInfo };"
+      },
+      "id": "node-error-log",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    }
+  ],
+  "connections": {
+    "Local File Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Context": {
+      "main": [
+        [
+          {
+            "node": "Read specs.json",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create Directories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read specs.json": {
+      "main": [
+        [
+          {
+            "node": "Validate specs.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate specs.json": {
+      "main": [
+        [
+          {
+            "node": "Validation Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Check": {
+      "main": [
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Directories": {
+      "main": [
+        [
+          {
+            "node": "Merge Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Document": {
+      "main": [
+        [
+          {
+            "node": "Write Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Move to Error Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to Error Folder": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-02-04T00:00:00.000Z",
+  "versionId": "2"
+}

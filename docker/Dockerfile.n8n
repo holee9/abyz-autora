@@ -1,0 +1,31 @@
+# Custom n8n image with Python support for document merging
+# Built for Raspberry Pi (ARM64)
+
+FROM n8nio/n8n:latest
+
+# Install Python and required packages
+USER root
+
+# Install Python and pip
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY scripts/requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+
+# Create scripts directory
+RUN mkdir -p /scripts
+
+# Copy merge script
+COPY scripts/merge_doc.py /scripts/merge_doc.py
+RUN chmod +x /scripts/merge_doc.py
+
+# Switch back to node user
+USER node
+
+# Verify Python installation
+RUN python3 --version && pip3 list | grep mailmerge
