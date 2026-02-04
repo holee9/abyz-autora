@@ -12,6 +12,7 @@
 | **Context-Aware Mapping** | 파일 경로를 분석하여 제품(Product)과 모델(Model) 자동 식별 |
 | **Cross-Border Templating** | 단일 스펙 데이터로 국가별(FDA, CE, MFDS) 양식 자동 처리 |
 | **Audit Trail** | GMP/ISO 13485 규정 준용 로그 기록 |
+| **Korean Support** | 한글 파일명 및 EUC-KR/CP949 인코딩 지원 |
 
 ## 시스템 구조
 
@@ -24,16 +25,28 @@
 │           ├── specs.json  # 모델 사양서 (Single Source of Truth)
 │           ├── assets/     # 도면, 그래프, 시험성적서
 │           ├── requests/   # [Input] 빈 양식 넣는 곳
-│           └── output/     # [Output] 완성된 문서
-└── 03_Logs/                # 시스템 로그
+│           ├── output/     # [Output] 완성된 문서
+│           └── _Error/     # 에러 발생 파일 격리
+└── 03_Logs/                # 시스템 로그 (audit.log, errors.log)
 ```
 
 ## 기술 스택
 
-- **n8n**: Self-hosted workflow automation (Docker)
-- **Python**: docx-mailmerge for Word document generation
-- **Platform**: Raspberry Pi (ARM64)
-- **Storage**: Local NAS mount
+| 구성 | 기술 |
+|------|------|
+| **워크플로우 엔진** | n8n v1.64.1 (Docker) |
+| **문서 생성** | Python 3 + docx-mailmerge |
+| **플랫폼** | Raspberry Pi 4/5 (ARM64) |
+| **스토리지** | 로컬 NAS 마운트 |
+| **보안** | no-new-privileges, resource limits |
+
+## 보안 강화
+
+- 파일명 sanitization (Command injection 방지)
+- Path traversal 검출
+- 파일 크기 제한 (10MB)
+- 한글 파일명 보존 (Unicode NFC 정규화)
+- 다중 인코딩 지원 (UTF-8, EUC-KR, CP949)
 
 ## 빠른 시작
 
@@ -44,16 +57,19 @@
 git clone https://github.com/holee9/abyz-autora.git
 cd abyz-autora/docker
 
-# 2. 환경 설정
+# 2. 환경 설정 (.env 파일은 git에서 제외됨)
 cp .env.example .env
-nano .env  # 비밀번호와 NAS 경로 설정
+nano .env  # 필수: 비밀번호, ENCRYPTION_KEY, NAS_PATH 변경
 
-# 3. 배포 스크립트 실행
+# 3. 암호화 키 생성
+openssl rand -hex 32  # .env의 ENCRYPTION_KEY에 값 입력
+
+# 4. 배포 스크립트 실행
 chmod +x deploy.sh
 ./deploy.sh
 
-# 4. n8n 접속
-open http://raspberrypi.local:5678
+# 5. n8n 접속
+# 브라우저에서 http://raspberrypi.local:5678 접속
 ```
 
 ### 로컬 개발 환경
@@ -63,10 +79,10 @@ open http://raspberrypi.local:5678
 pip install -r scripts/requirements.txt
 
 # 2. 병합 스크립트 테스트
-python scripts/merge_doc.py --template template.docx --json specs.json --output output.docx
-
-# 3. Docker 컨테이너 시작
-docker-compose up -d
+python scripts/merge_doc.py \
+  --template template.docx \
+  --json specs.json \
+  --output output.docx
 ```
 
 ## 워크플로우 import
@@ -79,15 +95,28 @@ n8n UI에서 `workflow/medical-doc-automation.json` 파일을 import하세요.
 abyz-autora/
 ├── docker/              # Docker 설정
 │   ├── docker-compose.yml
-│   ├── .env.example
-│   └── deploy.sh
+│   ├── .env.example     # 환경변수 템플릿 (.env는 gitignore)
+│   └── deploy.sh        # 자동 배포 스크립트
 ├── scripts/             # Python 스크립트
 │   ├── merge_doc.py     # 문서 병합 메인
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── setup_folder_structure.sh
 ├── workflow/            # n8n 워크플로우
 │   └── medical-doc-automation.json
 ├── memory/              # 에러 로그 & 레슨러닝
-└── plan-ra-n8n-workflow.md
+│   └── log.md           # 개발 중 발견된 이슈 기록
+└── README.md
+```
+
+## 환경 변수 (.env 필수 설정)
+
+```bash
+# 보안: 반드시 변경하세요
+N8N_PASSWORD=your_secure_password
+ENCRYPTION_KEY=32_character_hex_key_from_openssl
+
+# NAS 설정
+NAS_PATH=/mnt/medical-auth  # 실제 NAS 마운트 경로
 ```
 
 ## 프로젝트 상태
@@ -98,8 +127,9 @@ abyz-autora/
 - [x] n8n 워크플로우 설계
 - [x] Python 스크립트 개발
 - [x] Docker 환경 설정
-- [ ] 라즈베리파이 배포 및 테스트
-- [ ] 3회 반복 검증/개선
+- [x] 보안 강화 (3회 반복 검증 완료)
+- [x] 한글 파일명 지원
+- [ ] 라즈베리파이 실제 배포 테스트
 
 ## 라이선스
 

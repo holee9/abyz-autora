@@ -83,3 +83,20 @@ This folder tracks errors, failures, and solutions during development to prevent
 - Added path traversal detection in Python script
 - Added filename sanitization regex: `[^a-zA-Z0-9._-]`
 - Added .gitignore for .env files
+
+### [2026-02-04] Iteration 2 Fixes Applied
+- **Status:** Completed
+- **Korean Filename Handling:** Fixed workflow to preserve Hangul characters
+  - Changed regex from `[^a-zA-Z0-9._-]` to only remove invalid filesystem chars
+  - Added Unicode NFC normalization for consistency
+- **Symlink Attack Protection:** Enhanced path validation in Python
+  - Check for '..' in path before resolve
+  - Validate resolved path is within base_dir
+- **File Size Limits:** Added 10MB max file size check to prevent DoS
+- **Recursion Depth:** Added max depth limit (10) for JSON flattening
+- **Multiple Encoding Support:** Try UTF-8, EUC-KR, CP949 for Korean files
+- **Docker Version Pin:** Changed from `latest` to `n8nio/n8n:1.64.1`
+- **Security Options:** Added `no-new-privileges` to container
+- **Memory Optimization:** Reduced memory limit to 1G for Raspberry Pi
+- **SD Card Protection:** Mount logs to NAS volume
+- **Encryption Key:** Added N8N_ENCRYPTION_KEY to .env template

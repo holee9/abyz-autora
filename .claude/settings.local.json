@@ -3,7 +3,8 @@
     "allow": [
       "Bash(gh auth status:*)",
       "Bash(gh repo create:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(findstr:*)"
     ]
   }
 }

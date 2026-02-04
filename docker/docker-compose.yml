@@ -3,11 +3,12 @@ version: '3.8'
 
 services:
   n8n:
-    image: n8nio/n8n:latest
+    # Use specific version for reproducibility (update quarterly)
+    image: n8nio/n8n:1.64.1
     container_name: abyz-autora-n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "${N8N_PORT:-5678}:5678"
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
@@ -21,6 +22,9 @@ services:
       - N8N_LOG_OUTPUT=console
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
+      # Security headers
+      - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - N8N_EDITOR_BASE_URL=${EDITOR_BASE_URL:-/}
     env_file:
       - .env
     volumes:
@@ -30,16 +34,21 @@ services:
       - ${NAS_PATH:-/data/medical-auth}:/data/medical-auth
       # Custom scripts
       - ./scripts:/scripts:ro
+      # Logs directory (mounted to NAS to reduce SD card writes)
+      - ${NAS_PATH:-/data/medical-auth}/03_Logs:/logs
     networks:
       - abyz-network
     # For Raspberry Pi ARM64 compatibility
     platform: linux/arm64
-    # Resource limits for safety
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits for safety (reduced for Raspberry Pi 4/5)
     deploy:
       resources:
         limits:
           cpus: '2'
-          memory: 2G
+          memory: 1G
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -50,30 +59,34 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    # Add container label for Watchtower scope control
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "com.centurylinklabs.watchtower.scope=abyz-autora"
 
-  # Optional: Watchtower for auto-updates (disabled by default for security)
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: abyz-autora-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_POLL_INTERVAL=86400
-      - WATCHTOWER_SCOPE=abyz-autora
-      - WATCHTOWER_INCLUDE_STOPPED=false
-    networks:
-      - abyz-network
-    platform: linux/arm64
-    # Only update containers with this label
-    command: --label-enable --scope abyz-autora
-    profiles:
-      - auto-update
+  # PostgreSQL for production (optional - disabled by default)
+  # Uncomment to use PostgreSQL instead of SQLite
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: abyz-autora-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_USER=${DB_USER:-n8n}
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
+  #     - POSTGRES_DB=${DB_NAME:-n8n}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - abyz-network
+  #   platform: linux/arm64
+  #   profiles:
+  #     - database
 
 volumes:
   n8n_data:
     driver: local
+  # postgres_data:
+  #   driver: local
 
 networks:
   abyz-network:

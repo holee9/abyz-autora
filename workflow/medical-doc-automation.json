@@ -13,7 +13,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Context Extraction: Extract ProductName and ModelName from file path\n// Input path format: .../02_Projects/{ProductName}/{ModelName}/requests/{filename}.docx\n\nconst filePath = $input.first().json.path || $input.first().json.filePath;\n\n// Normalize path separators (Windows/Unix compatibility)\nconst normalizedPath = filePath.replace(/\\\\/g, '/');\n\n// Parse path components\nconst pathParts = normalizedPath.split('/').filter(p => p);\n\n// Find indices\nconst projectsIdx = pathParts.findIndex(p => p === '02_Projects');\nif (projectsIdx === -1 || pathParts.length <= projectsIdx + 2) {\n  throw new Error(`Invalid path structure: Cannot find 02_Projects folder in ${filePath}`);\n}\n\nconst productName = pathParts[projectsIdx + 1];\nconst modelName = pathParts[projectsIdx + 2];\nconst fileName = pathParts[pathParts.length - 1];\n\n// Sanitize filename to prevent command injection\nconst safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');\n\n// Detect target country from filename\nlet targetCountry = 'Unknown';\nconst fileNameUpper = fileName.toUpperCase();\nif (fileNameUpper.includes('FDA') || fileNameUpper.includes('510K')) {\n  targetCountry = 'US';\n} else if (fileNameUpper.includes('CE') || fileNameUpper.includes('MDR')) {\n  targetCountry = 'EU';\n} else if (fileNameUpper.includes('MFDS') || fileNameUpper.includes('KI')) {\n  targetCountry = 'KR';\n}\n\n// Construct paths\nconst basePath = '/data/medical-auth/02_Projects';\nconst projectPath = `${basePath}/${productName}/${modelName}`;\nconst specsPath = `${projectPath}/specs.json`;\nconst outputPath = `${projectPath}/output`;\nconst errorPath = `${projectPath}/_Error`;\n\n// Generate output filename with timestamp\nconst now = new Date();\nconst dateStr = now.getFullYear().toString() +\n                 (now.getMonth() + 1).toString().padStart(2, '0') +\n                 now.getDate().toString().padStart(2, '0');\nconst outputFileName = `${dateStr}_${targetCountry}_${safeFileName.replace('.docx', '')}_Completed.docx`;\n\nreturn {\n  json: {\n    productName,\n    modelName,\n    fileName: safeFileName,\n    originalFileName: fileName,\n    targetCountry,\n    specsPath,\n    outputPath,\n    errorPath,\n    outputFileName,\n    templatePath: normalizedPath,\n    fullOutputPath: `${outputPath}/${outputFileName}`,\n    fullErrorPath: `${errorPath}/${safeFileName}`,\n    timestamp: now.toISOString()\n  }\n};"
+        "jsCode": "// Context Extraction: Extract ProductName and ModelName from file path\n// Input path format: .../02_Projects/{ProductName}/{ModelName}/requests/{filename}.docx\n\nconst filePath = $input.first().json.path || $input.first().json.filePath;\n\n// Normalize path separators (Windows/Unix compatibility)\nconst normalizedPath = filePath.replace(/\\\\/g, '/');\n\n// Parse path components\nconst pathParts = normalizedPath.split('/').filter(p => p);\n\n// Find indices\nconst projectsIdx = pathParts.findIndex(p => p === '02_Projects');\nif (projectsIdx === -1 || pathParts.length <= projectsIdx + 2) {\n  throw new Error(`Invalid path structure: Cannot find 02_Projects folder in ${filePath}`);\n}\n\nconst productName = pathParts[projectsIdx + 1];\nconst modelName = pathParts[projectsIdx + 2];\nconst fileName = pathParts[pathParts.length - 1];\n\n// Sanitize filename - ONLY remove truly invalid filesystem characters\n// Preserves Korean (Hangul) and other Unicode characters\nconst safeFileName = fileName\n  .replace(/[<>:\"/\\\\|?*\\x00-\\x1f]/g, '_')  // Only remove invalid chars\n  .normalize('NFC');  // Normalize Unicode for consistency\n\n// Detect target country from filename\nlet targetCountry = 'Unknown';\nconst fileNameUpper = fileName.toUpperCase();\nif (fileNameUpper.includes('FDA') || fileNameUpper.includes('510K')) {\n  targetCountry = 'US';\n} else if (fileNameUpper.includes('CE') || fileNameUpper.includes('MDR')) {\n  targetCountry = 'EU';\n} else if (fileNameUpper.includes('MFDS') || fileNameUpper.includes('KI')) {\n  targetCountry = 'KR';\n}\n\n// Construct paths\nconst basePath = '/data/medical-auth/02_Projects';\nconst projectPath = `${basePath}/${productName}/${modelName}`;\nconst specsPath = `${projectPath}/specs.json`;\nconst outputPath = `${projectPath}/output`;\nconst errorPath = `${projectPath}/_Error`;\n\n// Generate output filename with timestamp\nconst now = new Date();\nconst dateStr = now.getFullYear().toString() +\n                 (now.getMonth() + 1).toString().padStart(2, '0') +\n                 now.getDate().toString().padStart(2, '0');\nconst nameWithoutExt = safeFileName.replace(/\\.docx$/i, '');\nconst outputFileName = `${dateStr}_${targetCountry}_${nameWithoutExt}_Completed.docx`;\n\nreturn {\n  json: {\n    productName,\n    modelName,\n    fileName: safeFileName,\n    originalFileName: fileName,\n    targetCountry,\n    specsPath,\n    outputPath,\n    errorPath,\n    outputFileName,\n    templatePath: normalizedPath,\n    fullOutputPath: `${outputPath}/${outputFileName}`,\n    fullErrorPath: `${errorPath}/${safeFileName}`,\n    timestamp: now.toISOString()\n  }\n};"
       },
       "id": "node-extract",
       "name": "Extract Context",
@@ -61,7 +61,7 @@
     },
     {
       "parameters": {
-        "command": "=mkdir -p \"{{ $('Extract Context').first().json.outputPath }}\" \"{{ $('Extract Context').first().json.errorPath }}\" \nmkdir -p /data/medical-auth/03_Logs"
+        "command": "mkdir -p \"{{ $json.outputPath }}\" \"{{ $json.errorPath }}\" /data/medical-auth/03_Logs"
       },
       "id": "node-mkdir",
       "name": "Create Directories",
@@ -71,7 +71,7 @@
     },
     {
       "parameters": {
-        "command": "=python3 /scripts/merge_doc.py \"--template={{ $('Extract Context').first().json.templatePath }}\" \"--json={{ $('Extract Context').first().json.specsPath }}\" \"--output={{ $('Extract Context').first().json.fullOutputPath }}\"",
+        "command": "=python3 /scripts/merge_doc.py --template={{ $json.templatePath }} --json={{ $json.specsPath }} --output={{ $json.fullOutputPath }}",
         "options": {}
       },
       "id": "node-merge",
@@ -102,8 +102,7 @@
     },
     {
       "parameters": {
-        "command": "=mv \"{{ $('Extract Context').first().json.templatePath }}\" \"{{ $('Extract Context').first().json.fullErrorPath }}\" 2>/dev/null || echo \"File already moved or does not exist\"",
-        "options": {}
+        "command": "mv \"{{ $json.templatePath }}\" \"{{ $json.fullErrorPath }}\" 2>/dev/null || echo \"File already moved or does not exist\""
       },
       "id": "node-move-error",
       "name": "Move to Error Folder",
@@ -113,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Write error log entry\nconst fs = require('fs');\nconst path = require('path');\n\nconst errorInfo = $json;\n\nconst logDir = '/data/medical-auth/03_Logs';\ntry {\n  fs.mkdirSync(logDir, { recursive: true });\n} catch (err) {\n  // Ignore\n}\n\nconst errorLogPath = path.join(logDir, 'errors.log');\nconst logLine = JSON.stringify(errorInfo) + '\\n';\n\ntry {\n  fs.appendFileSync(errorLogPath, logLine);\n} catch (err) {\n  console.error('Failed to write error log:', err);\n}\n\nreturn { json: errorInfo };"
+        "jsCode": "// Write error log entry\nconst fs = require('fs');\nconst path = require('path');\n\nconst errorInfo = $json;\nconst context = $('Extract Context').first().json;\n\nconst logDir = '/data/medical-auth/03_Logs';\ntry {\n  fs.mkdirSync(logDir, { recursive: true });\n} catch (err) {\n  // Ignore\n}\n\nconst errorLogPath = path.join(logDir, 'errors.log');\nconst logLine = JSON.stringify(errorInfo) + '\\n';\n\ntry {\n  fs.appendFileSync(errorLogPath, logLine);\n} catch (err) {\n  console.error('Failed to write error log:', err);\n}\n\nreturn { json: errorInfo };"
       },
       "id": "node-error-log",
       "name": "Log Error",
@@ -243,5 +242,5 @@
   "tags": [],
   "triggerCount": 1,
   "updatedAt": "2026-02-04T00:00:00.000Z",
-  "versionId": "2"
+  "versionId": "3"
 }
